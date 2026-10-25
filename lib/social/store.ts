@@ -2,6 +2,11 @@
 
 import { getDb, num, str } from "../db";
 import { reviews as manualReviews } from "../../data/reviews";
+import {
+  snapshotStats,
+  snapshotReviews,
+  snapshotPosts,
+} from "../../data/social-snapshot";
 import type {
   SocialOverview,
   SocialPost,
@@ -203,6 +208,10 @@ export function getSocialOverview(): SocialOverview {
     });
   }
 
+  // Fallback: на serverless-хостинге (Netlify/Vercel) живой базы нет, поэтому
+  // подставляем закоммиченный снимок, чтобы отзывы и посты показывались.
+  if (reviews.length === 0) reviews.push(...snapshotReviews);
+
   reviews.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
 
   const posts: SocialPost[] = db
@@ -223,6 +232,8 @@ export function getSocialOverview(): SocialOverview {
       pinned: num(row.is_pinned) === 1,
     }));
 
+  if (posts.length === 0) posts.push(...snapshotPosts);
+
   const sources: Record<SourceId, SourceStatus | null> = { "2gis": null, yandex: null, vk: null };
   let updatedAt: string | null = null;
 
@@ -241,6 +252,17 @@ export function getSocialOverview(): SocialOverview {
     if (str(row.status) === "ok") {
       const finishedAt = str(row.finished_at);
       if (!updatedAt || finishedAt > updatedAt) updatedAt = finishedAt;
+    }
+  }
+
+  // Fallback на снимок: если база пустая (serverless), берём статистику оттуда.
+  if (!Object.values(stats).some((item) => item !== null)) {
+    for (const source of SOURCES) stats[source] = snapshotStats[source] ?? null;
+    if (!updatedAt) {
+      const times = Object.values(snapshotStats)
+        .map((item) => item?.updatedAt)
+        .filter((t): t is string => Boolean(t));
+      updatedAt = times.length ? [...times].sort().at(-1)! : null;
     }
   }
 

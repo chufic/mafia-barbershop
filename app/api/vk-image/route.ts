@@ -91,13 +91,15 @@ export async function GET(request: Request) {
   const bytes = new Uint8Array(await upstream.arrayBuffer());
   if (bytes.byteLength === 0) return notFound();
 
-  await mkdir(CACHE_DIR, { recursive: true });
-  await Promise.all([
-    writeFile(file, bytes),
-    writeFile(metaFile, JSON.stringify({ type, at: Date.now() })),
-  ]).catch(() => {
-    // не смогли закэшировать — не страшно, отдаём картинку
-  });
+  try {
+    await mkdir(CACHE_DIR, { recursive: true });
+    await Promise.all([
+      writeFile(file, bytes),
+      writeFile(metaFile, JSON.stringify({ type, at: Date.now() })),
+    ]);
+  } catch {
+    // не смогли закэшировать (например, read-only ФС на serverless) — не страшно
+  }
 
   return imageResponse(bytes, type);
 }

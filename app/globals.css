@@ -462,9 +462,9 @@
     background-size: 160px 160px;
   }
 
-  /* Бегущая строка (тикер) */
+  /* Бегущая строка (тикер): 4 копии + translateX(-50%) дают бесшовный цикл */
   .marquee-track {
-    animation: marquee 36s linear infinite;
+    animation: marquee 72s linear infinite;
   }
 
   /* Штамп — газетный акцент */

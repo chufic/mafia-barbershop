@@ -2,6 +2,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { masters } from "../data/masters";
 import { services } from "../data/services";
@@ -120,16 +121,28 @@ export function getDb(): DatabaseSync {
   const globalStore = globalThis as GlobalWithDb;
   if (globalStore.__mafiaDb) return globalStore.__mafiaDb;
 
-  mkdirSync(path.dirname(dbFilePath), { recursive: true });
-  const db = new DatabaseSync(dbFilePath);
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("PRAGMA foreign_keys = ON;");
-  db.exec("PRAGMA busy_timeout = 5000;");
-  db.exec(SCHEMA);
-  seedCatalog(db);
+  // На serverless-хостингах (Netlify/Vercel) файловая система рядом с кодом
+  // только для чтения, поэтому `data/mafia.db` создать нельзя. Пробуем основной
+  // путь, а при ошибке — временный каталог ОС (данные не переживут рестарт
+  // функции, но сайт откроется и будет работать).
+  let lastError: unknown = null;
+  for (const candidate of [dbFilePath, path.join(tmpdir(), "mafia.db")]) {
+    try {
+      mkdirSync(path.dirname(candidate), { recursive: true });
+      const db = new DatabaseSync(candidate);
+      db.exec("PRAGMA journal_mode = WAL;");
+      db.exec("PRAGMA foreign_keys = ON;");
+      db.exec("PRAGMA busy_timeout = 5000;");
+      db.exec(SCHEMA);
+      seedCatalog(db);
 
-  globalStore.__mafiaDb = db;
-  return db;
+      globalStore.__mafiaDb = db;
+      return db;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 /** Каталог и мастера держим в БД синхронно с data/*.ts — это удобно для админки и отчётов. */
