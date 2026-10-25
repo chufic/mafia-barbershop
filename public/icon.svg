@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Барбершоп Мафия">
+  <rect width="512" height="512" rx="96" fill="#0A0A0B"/>
+  <rect x="24" y="24" width="464" height="464" rx="76" fill="none" stroke="#26262A" stroke-width="4"/>
+  <path d="M132 372V148l124 136 124-136v224h-56V240l-68 74-68-74v132z" fill="#C9A227"/>
+  <rect x="196" y="404" width="120" height="6" rx="3" fill="#C9A227" opacity="0.55"/>
+</svg>

@@ -1,0 +1,57 @@
+/**
+ * Логотип мессенджера MAX.
+ *
+ * Форма взята из официального логотипа max.ru, поэтому узнаваема.
+ * Два варианта:
+ *  - `brand` — градиентный круг с белым «облачком» (как в фирменном стиле MAX);
+ *  - `current` — монохромный знак, наследует цвет текста (в кнопках, где иконки
+ *    нарисованы в цвет остальных).
+ */
+const GLYPH =
+  "M50.76 0c27.53 0 49.12 22.34 49.12 49.89S77.61 99.23 51.02 99.23c-9.43 0-14.01-1.33-21.37-6.54-.5-.36-1.2-.26-1.63.19-5.66 6.04-20.17 10.28-20.83 2.03C7.19 80.53 0 71.18 0 49.61 0 21.3 23.22 0 50.76 0m.77 24.55c-13.07-.68-23.26 8.39-25.51 22.58-1.86 11.75 1.44 26.07 4.26 26.8 1.2.3 4.08-1.9 6.18-3.88.4-.37.99-.44 1.45-.15 3.27 2 6.97 3.5 11.05 3.71 13.42.7 25.3-9.8 26-23.21.71-13.42-10.01-25.14-23.43-25.85";
+
+const BUBBLE =
+  "M51.53 24.55c-13.07-.68-23.26 8.39-25.51 22.58-1.86 11.75 1.44 26.07 4.26 26.8 1.2.3 4.08-1.9 6.18-3.88.4-.37.99-.44 1.45-.15 3.27 2 6.97 3.5 11.05 3.71 13.42.7 25.3-9.8 26-23.21.71-13.42-10.01-25.14-23.43-25.85Z";
+
+export function MaxLogo({
+  size = 20,
+  tone = "current",
+  className = "",
+}: {
+  size?: number;
+  tone?: "brand" | "current";
+  className?: string;
+}) {
+  if (tone === "brand") {
+    return (
+      <span
+        className={`inline-flex shrink-0 items-center justify-center rounded-full ${className}`}
+        style={{
+          width: size,
+          height: size,
+          backgroundImage: "linear-gradient(135deg, #2e7bff 0%, #7b3bff 55%, #c42bff 100%)",
+        }}
+        aria-hidden="true"
+      >
+        <svg viewBox="0 0 100 100" width={size} height={size} aria-hidden="true" focusable="false">
+          <g transform="translate(50 50) scale(1.12) translate(-50 -50)">
+            <path fill="#fff" d={BUBBLE} />
+          </g>
+        </svg>
+      </span>
+    );
+  }
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      className={className}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path fill="currentColor" fillRule="evenodd" d={GLYPH} />
+    </svg>
+  );
+}
