@@ -25,8 +25,13 @@ export function MastersSection() {
         />
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {masters.map((master) => (
-            <article key={master.id} className="card flex flex-col overflow-hidden">
+          {masters.map((master, index) => (
+            <article
+              key={master.id}
+              className={`card flex flex-col overflow-hidden transition-transform duration-300 hover:-translate-y-0.5 ${
+                index % 2 ? "hover:rotate-[1.1deg]" : "hover:-rotate-[1.1deg]"
+              }`}
+            >
               <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-line bg-[linear-gradient(160deg,#211d17_0%,#121214_70%)]">
                 <span
                   aria-hidden="true"
