@@ -33,8 +33,8 @@ function FeaturedCard({ service, index }: { service: Service; index: number }) {
 
   return (
     <article
-      className={`card group flex flex-col overflow-hidden transition-transform duration-300 hover:-translate-y-0.5 hover:rotate-0 ${
-        index % 2 ? "sm:rotate-[1.1deg]" : "sm:-rotate-[1.1deg]"
+      className={`card group flex flex-col overflow-hidden transition-transform duration-300 hover:-translate-y-0.5 ${
+        index % 2 ? "hover:rotate-[1.1deg]" : "hover:-rotate-[1.1deg]"
       }`}
     >
       <div className="relative aspect-[16/11] overflow-hidden">
