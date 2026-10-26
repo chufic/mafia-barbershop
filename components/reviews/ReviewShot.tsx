@@ -54,11 +54,15 @@ export function ReviewShot({
   const rating = review.rating;
   const filled = rating === null ? 0 : Math.max(0, Math.min(5, Math.round(rating)));
   const tiltClass =
-    tilt === "left" ? "rotate-[-0.9deg]" : tilt === "right" ? "rotate-[0.9deg]" : "";
+    tilt === "left"
+      ? "hover:-rotate-[0.9deg]"
+      : tilt === "right"
+        ? "hover:rotate-[0.9deg]"
+        : "";
 
   return (
     <figure
-      className={`flex flex-col overflow-hidden rounded-[24px] border border-line bg-[linear-gradient(160deg,#191a20_0%,#121216_58%,#0c0c0f_100%)] p-4 text-left shadow-[0_26px_60px_-42px_rgba(0,0,0,1)] transition-transform duration-300 hover:rotate-0 ${
+      className={`flex flex-col overflow-hidden rounded-[24px] border border-line bg-[linear-gradient(160deg,#191a20_0%,#121216_58%,#0c0c0f_100%)] p-4 text-left shadow-[0_26px_60px_-42px_rgba(0,0,0,1)] transition-transform duration-300 ${
         fluid ? "w-full" : "w-[278px] shrink-0 sm:w-[302px]"
       } ${tiltClass} ${className}`}
     >
