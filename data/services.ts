@@ -132,7 +132,7 @@ export const services: Service[] = [
     short: "Стрижка и борода за один заход.",
     description:
       "Полный образ за один визит: стрижка головы и оформление бороды. Не нужно приезжать дважды.",
-    image: "/images/services/haircut-beard.jpg",
+    image: "/images/services/haircut-beard.jpg?v=20261027",
   },
   {
     id: "clipper-cut",
@@ -156,7 +156,7 @@ export const services: Service[] = [
     short: "Бритьё опасной бритвой.",
     description:
       "Классическое бритьё опасной бритвой — целый час с вниманием к коже и контуру.",
-    image: "/images/services/royal-shave.jpg",
+    image: "/images/services/royal-shave.jpg?v=20261027",
   },
   {
     id: "beard-shape",
@@ -168,7 +168,7 @@ export const services: Service[] = [
     short: "Контур, длина, форма.",
     description:
       "Придаём форму бороде и усам, выбриваем контур. Поддерживает опрятный вид между стрижками.",
-    image: "/images/services/beard-shape.jpg",
+    image: "/images/services/beard-shape.jpg?v=20261027",
   },
   {
     id: "kids-cut",
@@ -192,7 +192,7 @@ export const services: Service[] = [
     short: "Классическая мужская стрижка.",
     description:
       "Стрижка ножницами и машинкой с учётом формы головы и типа волос. 60 минут спокойной работы.",
-    image: "/images/services/mens-cut.jpg",
+    image: "/images/services/mens-cut.jpg?v=20261027",
     badge: "хит",
     popular: true,
   },
