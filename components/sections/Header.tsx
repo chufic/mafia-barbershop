@@ -17,6 +17,7 @@ const links = [
   { label: "Акции", href: "/#promo" },
   { label: "Отзывы", modal: "reviews" as const },
   { label: "Контакты", href: "/#contacts" },
+  { label: "Мои заявки", href: "/my" },
 ];
 
 export function Header() {
@@ -251,13 +252,9 @@ export function Header() {
             </div>
 
             <div className="border-t border-line px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-              <Link
-                href="/my"
-                onClick={() => setMenuOpen(false)}
-                className="flex min-h-[44px] items-center justify-center gap-2 text-sm text-muted"
-              >
-                <Icon name="calendar" size={16} /> Мои заявки
-              </Link>
+              <p className="text-center text-xs text-muted">
+                {site.phoneDisplay}
+              </p>
             </div>
           </div>
         </div>
