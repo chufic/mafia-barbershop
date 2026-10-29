@@ -46,7 +46,7 @@ export const site = {
     appStore: "", // TODO: ссылка на App Store, когда приложение выйдет
     googlePlay: "", // TODO: ссылка на Google Play
     max: "https://max.ru/u/f9LHodD0cOL6gGkOWXsKgvGCW5F-hjWJfsmu7Qp0hO8h2KeHuklP2JSzKE0",
-    telegram: "https://t.me/+79123980880", // TODO: заменить на t.me/<username>
+    telegram: "https://t.me/mafia_barber72_bot",
   },
 
   /** Координаты из карточки Яндекс Карт. */
@@ -67,4 +67,4 @@ export const site = {
   /** TODO: заменить на настоящий домен после покупки/привязки. */
 } as const;
 
-export const workingHoursText = `${site.hours.days} ${site.hours.open}–${site.hours.close}`;
+export const workingHoursText = "Ежедневно 10:00–21:00";
