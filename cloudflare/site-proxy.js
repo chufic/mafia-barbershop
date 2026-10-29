@@ -12,23 +12,12 @@ export default {
     const upstreamUrl = new URL(incoming.pathname + incoming.search, ORIGIN);
 
     const upstreamRequest = new Request(upstreamUrl, request);
-    const headers = new Headers(upstreamRequest.headers);
-    headers.delete("host");
     const clientIp = request.headers.get("cf-connecting-ip");
-    if (clientIp) headers.set("x-forwarded-for", clientIp);
-    const forwardedRequest = new Request(upstreamRequest, { headers, redirect: "manual" });
+    if (clientIp) upstreamRequest.headers.set("x-forwarded-for", clientIp);
 
-    const upstream = await fetch(forwardedRequest);
-    const responseHeaders = new Headers(upstream.headers);
-    const location = responseHeaders.get("location");
-    if (location?.startsWith(ORIGIN)) {
-      responseHeaders.set("location", incoming.origin + location.slice(ORIGIN.length));
-    }
-
-    return new Response(upstream.body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: responseHeaders,
-    });
+    // Return the upstream Response directly. Rebuilding it can leave a stale
+    // Content-Length/Content-Encoding pair on compressed Next.js bundles,
+    // which some mobile browsers keep waiting for instead of finishing load.
+    return fetch(upstreamRequest);
   },
 };
