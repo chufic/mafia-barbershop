@@ -1,8 +1,7 @@
-/** Тонкий типизированный слой над встроенным `node:sqlite` (Node 24). */
+/** Общий асинхронный слой БД: Turso в продакшене, локальный SQLite при разработке. */
 
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { createClient, type Client, type InArgs, type Transaction } from "@libsql/client";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { masters } from "../data/masters";
 import { services } from "../data/services";
@@ -63,8 +62,6 @@ CREATE TABLE IF NOT EXISTS feedback (
   created_at TEXT NOT NULL
 );
 
-/* --- Данные площадок: 2ГИС, Яндекс Карты, ВКонтакте --- */
-
 CREATE TABLE IF NOT EXISTS social_reviews (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL,
@@ -78,8 +75,7 @@ CREATE TABLE IF NOT EXISTS social_reviews (
   fetched_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_social_reviews_source
-  ON social_reviews(source, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_reviews_source ON social_reviews(source, published_at DESC);
 
 CREATE TABLE IF NOT EXISTS social_posts (
   id TEXT PRIMARY KEY,
@@ -93,8 +89,7 @@ CREATE TABLE IF NOT EXISTS social_posts (
   fetched_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_social_posts_source
-  ON social_posts(source, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_posts_source ON social_posts(source, published_at DESC);
 
 CREATE TABLE IF NOT EXISTS social_stats (
   source TEXT PRIMARY KEY,
@@ -115,88 +110,105 @@ CREATE TABLE IF NOT EXISTS social_sync (
 );
 `;
 
-type GlobalWithDb = typeof globalThis & { __mafiaDb?: DatabaseSync };
+type GlobalWithDb = typeof globalThis & { __mafiaDbClient?: Promise<Client> };
 
-export function getDb(): DatabaseSync {
+/** One cached client per warm server/function process; no local writable disk needed on Netlify. */
+export function getDb(): Promise<Client> {
   const globalStore = globalThis as GlobalWithDb;
-  if (globalStore.__mafiaDb) return globalStore.__mafiaDb;
+  if (!globalStore.__mafiaDbClient) {
+    globalStore.__mafiaDbClient = (async () => {
+      const remoteUrl = process.env.TURSO_DATABASE_URL?.trim();
+      const authToken = process.env.TURSO_AUTH_TOKEN?.trim();
+      if (remoteUrl && !authToken) {
+        throw new Error("TURSO_AUTH_TOKEN is required when TURSO_DATABASE_URL is set.");
+      }
 
-  // На serverless-хостингах (Netlify/Vercel) файловая система рядом с кодом
-  // только для чтения, поэтому `data/mafia.db` создать нельзя. Пробуем основной
-  // путь, а при ошибке — временный каталог ОС (данные не переживут рестарт
-  // функции, но сайт откроется и будет работать).
-  let lastError: unknown = null;
-  for (const candidate of [dbFilePath, path.join(tmpdir(), "mafia.db")]) {
-    try {
-      mkdirSync(path.dirname(candidate), { recursive: true });
-      const db = new DatabaseSync(candidate);
-      db.exec("PRAGMA journal_mode = WAL;");
-      db.exec("PRAGMA foreign_keys = ON;");
-      db.exec("PRAGMA busy_timeout = 5000;");
-      db.exec(SCHEMA);
-      seedCatalog(db);
+      const client = createClient(
+        remoteUrl
+          ? { url: remoteUrl, authToken, intMode: "number" }
+          : { url: pathToFileURL(dbFilePath).href, intMode: "number", timeout: 5000 },
+      );
 
-      globalStore.__mafiaDb = db;
-      return db;
-    } catch (error) {
-      lastError = error;
-    }
+      try {
+        await client.executeMultiple(SCHEMA);
+        await seedCatalog(client);
+        return client;
+      } catch (error) {
+        client.close();
+        throw error;
+      }
+    })();
   }
-  throw lastError;
+  return globalStore.__mafiaDbClient;
 }
 
-/** Каталог и мастера держим в БД синхронно с data/*.ts — это удобно для админки и отчётов. */
-function seedCatalog(db: DatabaseSync): void {
-  const upsertMaster = db.prepare(`
-    INSERT INTO masters (id, name, role, photo, work_days, start_time, end_time, is_active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name,
-      role = excluded.role,
-      photo = excluded.photo,
-      work_days = excluded.work_days,
-      start_time = excluded.start_time,
-      end_time = excluded.end_time,
-      is_active = excluded.is_active
-  `);
+async function seedCatalog(db: Client): Promise<void> {
+  const statements = [
+    ...masters.map((master) => ({
+      sql: `INSERT INTO masters (id, name, role, photo, work_days, start_time, end_time, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role,
+              photo=excluded.photo, work_days=excluded.work_days, start_time=excluded.start_time,
+              end_time=excluded.end_time, is_active=excluded.is_active`,
+      args: [
+        master.id,
+        master.name,
+        master.role,
+        master.photo,
+        JSON.stringify(master.workDays),
+        master.startTime,
+        master.endTime,
+        master.isActive ? 1 : 0,
+      ] as InArgs,
+    })),
+    ...services.map((service) => ({
+      sql: `INSERT INTO services (id, slug, name, category, price, duration_min)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET slug=excluded.slug, name=excluded.name,
+              category=excluded.category, price=excluded.price, duration_min=excluded.duration_min`,
+      args: [
+        service.id,
+        service.slug,
+        service.name,
+        service.category,
+        service.price,
+        service.durationMin,
+      ] as InArgs,
+    })),
+  ];
 
-  const upsertService = db.prepare(`
-    INSERT INTO services (id, slug, name, category, price, duration_min)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      slug = excluded.slug,
-      name = excluded.name,
-      category = excluded.category,
-      price = excluded.price,
-      duration_min = excluded.duration_min
-  `);
-
-  for (const master of masters) {
-    upsertMaster.run(
-      master.id,
-      master.name,
-      master.role,
-      master.photo,
-      JSON.stringify(master.workDays),
-      master.startTime,
-      master.endTime,
-      master.isActive ? 1 : 0,
-    );
-  }
-
-  for (const service of services) {
-    upsertService.run(
-      service.id,
-      service.slug,
-      service.name,
-      service.category,
-      service.price,
-      service.durationMin,
-    );
-  }
+  if (statements.length) await db.batch(statements, "write");
 }
 
 export type SqlRow = Record<string, unknown>;
+export type SqlArgs = InArgs;
+export type SqlExecutor = Pick<Client, "execute"> | Pick<Transaction, "execute">;
+
+export function rowObject(value: unknown): SqlRow {
+  return value && typeof value === "object" ? (value as SqlRow) : {};
+}
+
+export async function queryRows(
+  executor: SqlExecutor,
+  sql: string,
+  args: SqlArgs = [],
+): Promise<SqlRow[]> {
+  const result = await executor.execute({ sql, args });
+  return result.rows.map((row) => rowObject(row));
+}
+
+export async function queryOne(
+  executor: SqlExecutor,
+  sql: string,
+  args: SqlArgs = [],
+): Promise<SqlRow | undefined> {
+  const rows = await queryRows(executor, sql, args);
+  return rows[0];
+}
+
+export async function runSql(executor: SqlExecutor, sql: string, args: SqlArgs = []): Promise<void> {
+  await executor.execute({ sql, args });
+}
 
 export function str(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;

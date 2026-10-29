@@ -15,8 +15,8 @@ import { Marquee } from "@/components/ui/Marquee";
 /** Рейтинги и отзывы обновляются синхронизацией — страница пересобирается раз в минуту. */
 export const revalidate = 60;
 
-export default function HomePage() {
-  const social = getSocialOverview();
+export default async function HomePage() {
+  const social = await getSocialOverview();
   const twogis = social.stats["2gis"];
 
   const sameAs = [site.links.vk, site.links.twogis, site.links.yandexMaps].filter(Boolean);

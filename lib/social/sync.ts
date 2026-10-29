@@ -48,7 +48,7 @@ export async function runSync(only: SourceId[] = []): Promise<SyncSummary> {
     });
 
     const durationMs = Date.now() - startedAt;
-    saveSyncResults(results, durationMs);
+    await saveSyncResults(results, durationMs);
 
     return { durationMs, finishedAt: new Date().toISOString(), results };
   } finally {
@@ -56,7 +56,7 @@ export async function runSync(only: SourceId[] = []): Promise<SyncSummary> {
   }
 }
 
-export function getOverview(): SocialOverview {
+export async function getOverview(): Promise<SocialOverview> {
   return getSocialOverview();
 }
 

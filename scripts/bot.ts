@@ -6,6 +6,7 @@
 
 import { existsSync } from "node:fs";
 import { createBot } from "../lib/bot/bot";
+import { createProxyAgent } from "../lib/bot/proxy";
 
 // Загружаем .env.local (Next.js делает это сам, а отдельному скрипту — нет).
 if (existsSync(".env.local")) {
@@ -20,7 +21,8 @@ if (!token) {
   process.exit(1);
 }
 
-const bot = createBot(token);
+// Telegram с этой машины доступен только через локальный прокси.
+const bot = createBot(token, createProxyAgent());
 bot.catch((error) => {
   console.error("[bot] ошибка:", (error as { error?: unknown }).error ?? error);
 });

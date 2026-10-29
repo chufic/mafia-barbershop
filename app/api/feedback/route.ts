@@ -40,14 +40,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const db = getDb();
-  db.prepare("INSERT INTO feedback (id, name, phone, text, created_at) VALUES (?, ?, ?, ?, ?)").run(
-    randomUUID(),
-    parsed.value.name,
-    parsed.value.phone,
-    parsed.value.text,
-    new Date().toISOString(),
-  );
+  const db = await getDb();
+  await db.execute({
+    sql: "INSERT INTO feedback (id, name, phone, text, created_at) VALUES (?, ?, ?, ?, ?)",
+    args: [
+      randomUUID(),
+      parsed.value.name,
+      parsed.value.phone,
+      parsed.value.text,
+      new Date().toISOString(),
+    ],
+  });
 
   const sent = await sendTelegramMessage(buildFeedbackMessage(parsed.value));
 

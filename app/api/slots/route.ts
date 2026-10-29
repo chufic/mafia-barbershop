@@ -54,7 +54,7 @@ export async function GET(request: Request) {
       ? getActiveMasters()
       : getActiveMasters().filter((master) => master.id === parsed.masterId);
 
-  const dailyBusy = listBusyBetween(parsed.date, parsed.date);
+  const dailyBusy = await listBusyBetween(parsed.date, parsed.date);
   const day = buildDayAvailability({
     date: parsed.date,
     durationMin: parsed.durationMin,
@@ -67,7 +67,7 @@ export async function GET(request: Request) {
 
   let nearest: NearestSlotDto[] = [];
   if (day.slots.length === 0 && selectedMasters.length > 0) {
-    nearest = findNearest({
+    nearest = await findNearest({
       fromDate: parsed.date,
       durationMin: parsed.durationMin,
       masters: selectedMasters,
@@ -96,15 +96,15 @@ export async function GET(request: Request) {
   });
 }
 
-function findNearest(input: {
+async function findNearest(input: {
   fromDate: string;
   durationMin: number;
   masters: Master[];
   now: Date;
-}): NearestSlotDto[] {
+}): Promise<NearestSlotDto[]> {
   const masters = input.masters;
   const lastDate = addDays(input.fromDate, NEAREST_DAYS);
-  const extendedBusy = listBusyBetween(input.fromDate, lastDate);
+  const extendedBusy = await listBusyBetween(input.fromDate, lastDate);
   const collected: MergedSlot[] = [];
 
   for (let offset = 1; offset <= NEAREST_DAYS && collected.length < NEAREST_LIMIT; offset += 1) {

@@ -1,11 +1,53 @@
 /** Уведомления в Telegram. Токен живёт только на сервере. */
 
+import { connect } from "node:net";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { site } from "../data/site";
 import type { BookingRecord } from "./bookings";
 import { formatDuration, formatPrice } from "./format";
 import { formatDateTimeRange, toZoned } from "./time";
 
 const TELEGRAM_API = "https://api.telegram.org";
+
+/** С этой машины api.telegram.org доступен только через локальный прокси (ByeDPI). */
+let cachedProxy: string | null | undefined;
+
+function isPortOpen(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host, port });
+    socket.setTimeout(400);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function detectProxy(): Promise<string | null> {
+  if (cachedProxy !== undefined) return cachedProxy;
+  const explicit = process.env.TELEGRAM_PROXY || process.env.HTTPS_PROXY;
+  if (explicit) {
+    cachedProxy = explicit;
+    return explicit;
+  }
+  cachedProxy = (await isPortOpen("127.0.0.1", 20809)) ? "http://127.0.0.1:20809" : null;
+  return cachedProxy;
+}
+
+/** fetch к Telegram: через локальный прокси, если он доступен, иначе напрямую. */
+async function telegramFetch(url: string, init: RequestInit): Promise<Response> {
+  const proxy = await detectProxy();
+  if (!proxy) return fetch(url, init);
+  return undiciFetch(url, {
+    ...init,
+    dispatcher: new ProxyAgent(proxy),
+  } as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+}
 
 export function isTelegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim());
@@ -80,7 +122,7 @@ export async function sendTelegramMessage(text: string): Promise<boolean> {
   }
 
   try {
-    const response = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
+    const response = await telegramFetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

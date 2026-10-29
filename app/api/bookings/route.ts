@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const bookings = getBookingsByPhone(phone).map((booking) => bookingToDto(booking));
+  const bookings = (await getBookingsByPhone(phone)).map((booking) => bookingToDto(booking));
   return NextResponse.json<BookingsListResponse>(
     { bookings },
     { headers: { "Cache-Control": "no-store" } },
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = createBooking({
+  const result = await createBooking({
     name: parsed.value.name,
     phone: parsed.value.phone,
     comment: parsed.value.comment,

@@ -4,16 +4,20 @@ import { randomInt, randomUUID } from "node:crypto";
 import { getMasterById } from "../data/masters";
 import { getServiceById } from "../data/services";
 import type { BookingDto, BookingServiceDto } from "./api-types";
-import { getDb, num, str, type SqlRow } from "./db";
 import {
-  computeMasterAvailability,
-  hasSlot,
-  type BusyInterval,
-} from "./slots";
+  getDb,
+  num,
+  queryOne,
+  queryRows,
+  runSql,
+  str,
+  type SqlExecutor,
+  type SqlRow,
+} from "./db";
+import { computeMasterAvailability, hasSlot, type BusyInterval } from "./slots";
 import { addDays, toZoned, zonedToUtc, CANCEL_WINDOW_HOURS } from "./time";
 
 export type BookingStatus = "new" | "cancelled" | "done";
-
 export type BookingServiceSnapshot = BookingServiceDto;
 
 export type BookingRecord = {
@@ -63,29 +67,27 @@ const SELECT_WITH_MASTER = `
   LEFT JOIN masters m ON m.id = b.master_id
 `;
 
-/** Занятые интервалы за диапазон локальных дат (включительно). */
-export function listBusyBetween(
+async function busyBetween(
+  executor: SqlExecutor,
   fromDate: string,
   toDate: string,
   masterId?: string,
-): BusyInterval[] {
-  const db = getDb();
+): Promise<BusyInterval[]> {
   const lower = zonedToUtc(fromDate, "00:00").toISOString();
   const upper = zonedToUtc(addDays(toDate, 1), "00:00").toISOString();
-
   const rows = masterId
-    ? db
-        .prepare(
-          `SELECT master_id, starts_at, ends_at FROM bookings
-           WHERE status != 'cancelled' AND master_id = ? AND starts_at < ? AND ends_at > ?`,
-        )
-        .all(masterId, upper, lower)
-    : db
-        .prepare(
-          `SELECT master_id, starts_at, ends_at FROM bookings
-           WHERE status != 'cancelled' AND starts_at < ? AND ends_at > ?`,
-        )
-        .all(upper, lower);
+    ? await queryRows(
+        executor,
+        `SELECT master_id, starts_at, ends_at FROM bookings
+         WHERE status != 'cancelled' AND master_id = ? AND starts_at < ? AND ends_at > ?`,
+        [masterId, upper, lower],
+      )
+    : await queryRows(
+        executor,
+        `SELECT master_id, starts_at, ends_at FROM bookings
+         WHERE status != 'cancelled' AND starts_at < ? AND ends_at > ?`,
+        [upper, lower],
+      );
 
   return rows.map((row) => ({
     masterId: str(row.master_id),
@@ -94,27 +96,29 @@ export function listBusyBetween(
   }));
 }
 
-export function listBusyForDate(date: string, masterId?: string): BusyInterval[] {
+/** Занятые интервалы за диапазон локальных дат (включительно). */
+export async function listBusyBetween(
+  fromDate: string,
+  toDate: string,
+  masterId?: string,
+): Promise<BusyInterval[]> {
+  return busyBetween(await getDb(), fromDate, toDate, masterId);
+}
+
+export async function listBusyForDate(date: string, masterId?: string): Promise<BusyInterval[]> {
   return listBusyBetween(date, date, masterId);
 }
 
-export function createBooking(
+export async function createBooking(
   input: CreateBookingInput,
   now: Date = new Date(),
-): CreateBookingResult {
-  const db = getDb();
-
-  if (input.requestKey) {
-    const existing = findByRequestKey(input.requestKey);
-    if (existing) return { ok: true, booking: existing, duplicate: true };
-  }
-
+): Promise<CreateBookingResult> {
   const uniqueIds = [...new Set(input.serviceIds)];
-  const services = uniqueIds
+  const selectedServices = uniqueIds
     .map((id) => getServiceById(id))
     .filter((service): service is NonNullable<typeof service> => Boolean(service));
 
-  if (services.length === 0 || services.length !== uniqueIds.length) {
+  if (selectedServices.length === 0 || selectedServices.length !== uniqueIds.length) {
     return { ok: false, code: "invalid", message: "Услуги не найдены в каталоге." };
   }
 
@@ -128,33 +132,38 @@ export function createBooking(
     return { ok: false, code: "invalid", message: "Некорректная дата и время." };
   }
 
-  const durationMin = services.reduce((sum, service) => sum + service.durationMin, 0);
-  const totalPrice = services.reduce((sum, service) => sum + service.price, 0);
+  const durationMin = selectedServices.reduce((sum, service) => sum + service.durationMin, 0);
+  const totalPrice = selectedServices.reduce((sum, service) => sum + service.price, 0);
   const endsAt = new Date(startsAt.getTime() + durationMin * 60_000);
   const date = toZoned(startsAt).dateStr;
   const startsAtIso = startsAt.toISOString();
   const endsAtIso = endsAt.toISOString();
-
-  const snapshot: BookingServiceSnapshot[] = services.map((service) => ({
+  const snapshot: BookingServiceSnapshot[] = selectedServices.map((service) => ({
     id: service.id,
     name: service.name,
     price: service.price,
     durationMin: service.durationMin,
   }));
 
-  db.exec("BEGIN IMMEDIATE");
+  const db = await getDb();
+  let tx: Awaited<ReturnType<typeof db.transaction>> | null = null;
   try {
-    const busy = listBusyForDate(date);
-    const availability = computeMasterAvailability({
-      date,
-      durationMin,
-      master,
-      busy,
-      now,
-    });
+    tx = await db.transaction("write");
 
+    if (input.requestKey) {
+      const existing = await findByRequestKey(input.requestKey, tx);
+      if (existing) {
+        await tx.rollback();
+        tx = null;
+        return { ok: true, booking: existing, duplicate: true };
+      }
+    }
+
+    const busy = await busyBetween(tx, date, date);
+    const availability = computeMasterAvailability({ date, durationMin, master, busy, now });
     if (!hasSlot(availability, startsAtIso)) {
-      db.exec("ROLLBACK");
+      await tx.rollback();
+      tx = null;
       return {
         ok: false,
         code: "slot_taken",
@@ -163,49 +172,41 @@ export function createBooking(
     }
 
     const id = randomUUID();
-    const publicId = nextPublicId(startsAt);
-    const createdAt = now.toISOString();
-
-    const insert = db.prepare(`
-      INSERT INTO bookings (
+    const publicId = await nextPublicId(startsAt, tx);
+    await tx.execute({
+      sql: `INSERT INTO bookings (
         id, public_id, name, phone, comment, master_id, starts_at, ends_at,
         duration_min, services_json, total_price, status, created_at, source, request_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)
-    `);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)`,
+      args: [
+        id,
+        publicId,
+        input.name,
+        input.phone,
+        input.comment,
+        input.masterId,
+        startsAtIso,
+        endsAtIso,
+        durationMin,
+        JSON.stringify(snapshot),
+        totalPrice,
+        now.toISOString(),
+        input.source,
+        input.requestKey,
+      ],
+    });
 
-    insert.run(
-      id,
-      publicId,
-      input.name,
-      input.phone,
-      input.comment,
-      input.masterId,
-      startsAtIso,
-      endsAtIso,
-      durationMin,
-      JSON.stringify(snapshot),
-      totalPrice,
-      createdAt,
-      input.source,
-      input.requestKey,
-    );
+    await tx.commit();
+    tx = null;
 
-    db.exec("COMMIT");
-
-    const created = findByPublicId(publicId);
-    if (!created) {
-      return { ok: false, code: "unknown", message: "Заявка создана, но не найдена." };
-    }
+    const created = await findByPublicId(publicId);
+    if (!created) return { ok: false, code: "unknown", message: "Заявка создана, но не найдена." };
     return { ok: true, booking: created, duplicate: false };
   } catch (error) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {
-      // транзакция уже закрыта
-    }
+    if (tx) await tx.rollback().catch(() => undefined);
 
     if (isUniqueViolation(error) && input.requestKey) {
-      const existing = findByRequestKey(input.requestKey);
+      const existing = await findByRequestKey(input.requestKey);
       if (existing) return { ok: true, booking: existing, duplicate: true };
     }
 
@@ -214,42 +215,42 @@ export function createBooking(
   }
 }
 
-export function getBookingsByPhone(phone: string, now: Date = new Date()): BookingRecord[] {
-  const db = getDb();
-  const rows = db
-    .prepare(`${SELECT_WITH_MASTER} WHERE b.phone = ? ORDER BY b.starts_at DESC LIMIT 100`)
-    .all(phone);
+export async function getBookingsByPhone(
+  phone: string,
+  now: Date = new Date(),
+): Promise<BookingRecord[]> {
+  const rows = await queryRows(
+    await getDb(),
+    `${SELECT_WITH_MASTER} WHERE b.phone = ? ORDER BY b.starts_at DESC LIMIT 100`,
+    [phone],
+  );
 
-  return rows
-    .map(mapRow)
-    .sort((a, b) => {
-      const aUpcoming = new Date(a.startsAt).getTime() >= now.getTime();
-      const bUpcoming = new Date(b.startsAt).getTime() >= now.getTime();
-      if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
-      return aUpcoming
-        ? new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
-        : new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime();
-    });
+  return rows.map(mapRow).sort((a, b) => {
+    const aUpcoming = new Date(a.startsAt).getTime() >= now.getTime();
+    const bUpcoming = new Date(b.startsAt).getTime() >= now.getTime();
+    if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+    return aUpcoming
+      ? new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
+      : new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime();
+  });
 }
 
-export function getBookingByPublicId(publicId: string): BookingRecord | null {
+export async function getBookingByPublicId(publicId: string): Promise<BookingRecord | null> {
   return findByPublicId(publicId);
 }
 
-export function cancelBooking(
+export async function cancelBooking(
   publicId: string,
   phone: string,
   now: Date = new Date(),
-): CancelBookingResult {
-  const booking = findByPublicId(publicId);
+): Promise<CancelBookingResult> {
+  const booking = await findByPublicId(publicId);
   if (!booking) return { ok: false, code: "not_found", message: "Заявка не найдена." };
   if (booking.phone !== phone) {
     return { ok: false, code: "forbidden", message: "Телефон не совпадает с заявкой." };
   }
   if (booking.status === "cancelled") return { ok: true, booking };
-  if (booking.status === "done") {
-    return { ok: false, code: "invalid", message: "Визит уже прошёл." };
-  }
+  if (booking.status === "done") return { ok: false, code: "invalid", message: "Визит уже прошёл." };
 
   const hoursLeft = (new Date(booking.startsAt).getTime() - now.getTime()) / 3_600_000;
   if (hoursLeft < CANCEL_WINDOW_HOURS) {
@@ -260,9 +261,8 @@ export function cancelBooking(
     };
   }
 
-  const db = getDb();
-  db.prepare("UPDATE bookings SET status = 'cancelled' WHERE public_id = ?").run(publicId);
-  const updated = findByPublicId(publicId);
+  await runSql(await getDb(), "UPDATE bookings SET status = 'cancelled' WHERE public_id = ?", [publicId]);
+  const updated = await findByPublicId(publicId);
   if (!updated) return { ok: false, code: "not_found", message: "Заявка не найдена." };
   return { ok: true, booking: updated };
 }
@@ -296,36 +296,38 @@ export function bookingToDto(booking: BookingRecord, now: Date = new Date()): Bo
 }
 
 /** MF-YYMMDD-XXXX, дата — тюменская дата визита. */
-export function generatePublicId(startsAt: Date): string {
-  return nextPublicId(startsAt);
+export async function generatePublicId(startsAt: Date): Promise<string> {
+  return nextPublicId(startsAt, await getDb());
 }
 
-function nextPublicId(startsAt: Date): string {
-  const db = getDb();
+async function nextPublicId(startsAt: Date, executor: SqlExecutor): Promise<string> {
   const moment = toZoned(startsAt);
   const datePart = `${String(moment.year).slice(2)}${String(moment.month).padStart(2, "0")}${String(
     moment.day,
   ).padStart(2, "0")}`;
-  const exists = db.prepare("SELECT 1 FROM bookings WHERE public_id = ?");
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const candidate = `MF-${datePart}-${randomInt(1000, 10_000)}`;
-    if (!exists.get(candidate)) return candidate;
+    const exists = await queryOne(executor, "SELECT 1 AS found FROM bookings WHERE public_id = ?", [candidate]);
+    if (!exists) return candidate;
   }
   return `MF-${datePart}-${randomInt(10_000, 100_000)}`;
 }
 
-function findByPublicId(publicId: string): BookingRecord | null {
-  const row = getDb()
-    .prepare(`${SELECT_WITH_MASTER} WHERE b.public_id = ?`)
-    .get(publicId);
+async function findByPublicId(publicId: string): Promise<BookingRecord | null> {
+  const row = await queryOne(await getDb(), `${SELECT_WITH_MASTER} WHERE b.public_id = ?`, [publicId]);
   return row ? mapRow(row) : null;
 }
 
-function findByRequestKey(requestKey: string): BookingRecord | null {
-  const row = getDb()
-    .prepare(`${SELECT_WITH_MASTER} WHERE b.request_key = ?`)
-    .get(requestKey);
+async function findByRequestKey(
+  requestKey: string,
+  executor?: SqlExecutor,
+): Promise<BookingRecord | null> {
+  const row = await queryOne(
+    executor ?? (await getDb()),
+    `${SELECT_WITH_MASTER} WHERE b.request_key = ?`,
+    [requestKey],
+  );
   return row ? mapRow(row) : null;
 }
 
@@ -369,5 +371,5 @@ function parseServices(value: unknown): BookingServiceSnapshot[] {
 }
 
 function isUniqueViolation(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("UNIQUE constraint failed");
+  return error instanceof Error && /UNIQUE constraint failed|SQLITE_CONSTRAINT_UNIQUE/i.test(error.message);
 }

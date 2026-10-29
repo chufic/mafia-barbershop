@@ -43,8 +43,8 @@ export async function POST(
     );
   }
 
-  const before = getBookingByPublicId(publicId);
-  const result = cancelBooking(publicId, phone);
+  const before = await getBookingByPublicId(publicId);
+  const result = await cancelBooking(publicId, phone);
 
   if (!result.ok) {
     const status =

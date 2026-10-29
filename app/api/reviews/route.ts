@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(Math.trunc(limitParam), 1), 60) : 40;
   const source = params.get("source") as SourceId | null;
 
-  const overview = getSocialOverview();
+  const overview = await getSocialOverview();
   const filtered =
     source && SOURCES.includes(source)
       ? overview.reviews.filter((review) => review.source === source)

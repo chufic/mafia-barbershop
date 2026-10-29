@@ -22,7 +22,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403, headers: NO_STORE });
   }
 
-  const overview = getSocialOverview();
+  const overview = await getSocialOverview();
 
   return NextResponse.json(
     {
