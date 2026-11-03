@@ -11,18 +11,29 @@
  * Услуги можно выбрать несколько (до 4, как в корзине сайта).
  */
 
-import { Bot, InlineKeyboard, Keyboard } from "grammy";
+import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy";
 import { getActiveMasters, getMasterById } from "../../data/masters";
 import { services } from "../../data/services";
 import { site } from "../../data/site";
-import { createBooking, listBusyForDate } from "../bookings";
-import { getDb, num, rowObject, str } from "../db";
+import {
+  bookingToDto,
+  cancelBooking,
+  cancelBookingByChatId,
+  createBooking,
+  getBookingsByChatId,
+  getBookingsByPhone,
+  listBusyForDate,
+  type BookingRecord,
+} from "../bookings";
+import { getDb, num, queryOne, rowObject, str } from "../db";
+import { normalizePhone } from "../phone";
 import { computeMasterAvailability } from "../slots";
-import { escapeHtml, notifyNewBooking } from "../telegram";
+import { escapeHtml, notifyCancellation, notifyNewBooking } from "../telegram";
 import { formatDuration, formatPrice } from "../format";
 import {
   addDays,
   formatDateRu,
+  formatDateShort,
   formatDateTimeRange,
   formatRelativeDate,
   todayDateStr,
@@ -45,6 +56,113 @@ function isAdmin(chatId: number): boolean {
 
 function phoneDigits(value: string): string {
   return value.replace(/\D/g, "");
+}
+
+/* ---------- /my: состояние диалога и список записей ---------- */
+
+const STATE_MY = "my";
+
+/**
+ * На serverless между запросами нет памяти, поэтому «жду номер для /my»
+ * храним в базе, а не в переменной модуля.
+ */
+async function setBotState(chatId: string, value: string): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `INSERT INTO bot_state (chat_id, value, updated_at) VALUES (?, ?, ?)
+          ON CONFLICT(chat_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    args: [chatId, value, new Date().toISOString()],
+  });
+}
+
+/** Читает и удаляет состояние: оно нужно только на один следующий шаг. */
+async function takeBotState(chatId: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await queryOne(db, "SELECT value FROM bot_state WHERE chat_id = ?", [chatId]);
+  if (!row) return null;
+  await db.execute({ sql: "DELETE FROM bot_state WHERE chat_id = ?", args: [chatId] });
+  return str(row.value);
+}
+
+/** Список будущих записей и кнопки отмены. null — если записей нет. */
+function myBookingsView(
+  bookings: BookingRecord[],
+  now: Date,
+  withPhone: string | null,
+): { text: string; keyboard: InlineKeyboard } | null {
+  const upcoming = bookings.filter(
+    (booking) => booking.status === "new" && new Date(booking.startsAt).getTime() > now.getTime(),
+  );
+  if (upcoming.length === 0) return null;
+
+  const keyboard = new InlineKeyboard();
+  const blocks = upcoming.map((booking) => {
+    const dto = bookingToDto(booking, now);
+    const services = booking.services.map((service) => service.name).join(", ");
+
+    if (dto.canCancel) {
+      const label = `❌ Отменить ${formatDateShort(dto.date)} в ${dto.time}`;
+      keyboard
+        .text(
+          label,
+          withPhone ? `xp:${booking.publicId}:${phoneDigits(withPhone)}` : `x:${booking.publicId}`,
+        )
+        .row();
+    }
+
+    return (
+      `🕐 <b>${escapeHtml(formatDateTimeRange(booking.startsAt, booking.endsAt))}</b>\n` +
+      `💈 ${escapeHtml(services)} — ${formatPrice(booking.totalPrice)}\n` +
+      `👤 ${escapeHtml(booking.masterName)} · № ${escapeHtml(booking.publicId)}` +
+      (dto.canCancel
+        ? ""
+        : `\n⚠️ До визита меньше 2 часов — отменить можно только по телефону ${escapeHtml(site.phoneDisplay)}.`)
+    );
+  });
+
+  return { text: `Ваши записи:\n\n${blocks.join("\n\n")}`, keyboard };
+}
+
+/** Показать записи по чату; если их нет — попросить номер телефона. */
+async function sendMyBookings(ctx: Context, chatId: string): Promise<void> {
+  const now = new Date();
+  const bookings = await getBookingsByChatId(chatId, now);
+  const view = myBookingsView(bookings, now, null);
+
+  if (view) {
+    await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+    return;
+  }
+
+  await setBotState(chatId, STATE_MY);
+  await ctx.reply(
+    "Пока не вижу записей из этого чата.\n\n" +
+      "Поделитесь номером телефона, на который оформлена запись, — найду её.",
+    { reply_markup: contactKeyboard("📞 Поделиться номером") },
+  );
+}
+
+function contactKeyboard(label: string): Keyboard {
+  return new Keyboard().requestContact(label).oneTime(true).resized(true);
+}
+
+/** Ответ на нажатие «Отменить»: сообщение + уведомление администратору. */
+async function handleCancellation(
+  ctx: Context,
+  result: Awaited<ReturnType<typeof cancelBooking>>,
+): Promise<void> {
+  if (!result.ok) {
+    await ctx.answerCallbackQuery({ text: result.message, show_alert: true });
+    return;
+  }
+
+  await ctx.answerCallbackQuery({ text: "Запись отменена" });
+  await ctx.editMessageText(
+    `❌ Запись № ${escapeHtml(result.booking.publicId)} отменена.\n\n` +
+      `«Мои записи» покажет остальные. Записаться заново — /start`,
+    { parse_mode: "HTML" },
+  );
+  await notifyCancellation(result.booking).catch(() => undefined);
 }
 
 /** Список индексов услуг из callback_data («0,5,12» → [0, 5, 12]). */
@@ -148,6 +266,8 @@ export function createBot(token: string, agent?: unknown): Bot {
   const mainMenu = new InlineKeyboard()
     .text("📝 Записаться", "book")
     .row()
+    .text("📋 Мои записи", "mybookings")
+    .row()
     .text("💰 Услуги и цены", "prices");
 
   bot.command("start", async (ctx) => {
@@ -158,7 +278,8 @@ export function createBot(token: string, agent?: unknown): Bot {
       `Привет! Я бот барбершопа <b>«Мафия»</b> в Тюмени.\n` +
         `Запишу вас на стрижку или бороду — быстрее, чем звонить.\n\n` +
         `🏠 ${escapeHtml(site.address)}\n` +
-        `🕙 ${escapeHtml(site.hours.days)}, ${escapeHtml(site.hours.open)}–${escapeHtml(site.hours.close)}` +
+        `🕙 ${escapeHtml(site.hours.days)}, ${escapeHtml(site.hours.open)}–${escapeHtml(site.hours.close)}\n\n` +
+        `Записаться — кнопка ниже. Посмотреть или отменить запись — /my` +
         adminLine,
       { parse_mode: "HTML", reply_markup: mainMenu },
     );
@@ -167,9 +288,18 @@ export function createBot(token: string, agent?: unknown): Bot {
   bot.command("help", async (ctx) => {
     const adminLine = isAdmin(ctx.chat.id) ? "/bookings — ближайшие заявки\n" : "";
     await ctx.reply(
-      `Команды:\n/start — главное меню\n/services — услуги и цены\n${adminLine}`,
+      `Команды:\n/start — главное меню\n/my — мои записи и отмена\n/services — услуги и цены\n${adminLine}`,
       { reply_markup: mainMenu },
     );
+  });
+
+  bot.command("my", async (ctx) => {
+    await sendMyBookings(ctx, String(ctx.chat.id));
+  });
+
+  bot.callbackQuery("mybookings", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendMyBookings(ctx, String(ctx.chat?.id ?? ctx.from?.id ?? ""));
   });
 
   bot.command("services", async (ctx) => {
@@ -187,11 +317,9 @@ export function createBot(token: string, agent?: unknown): Bot {
   // Записаться → просим номер
   bot.callbackQuery("book", async (ctx) => {
     await ctx.answerCallbackQuery();
+    await takeBotState(String(ctx.chat?.id ?? ctx.from?.id ?? ""));
     await ctx.reply("Для записи нужен ваш номер телефона. Нажмите кнопку ниже 👇", {
-      reply_markup: new Keyboard()
-        .requestContact("📞 Поделиться номером")
-        .oneTime(true)
-        .resized(true),
+      reply_markup: contactKeyboard("📞 Поделиться номером"),
     });
   });
 
@@ -205,13 +333,35 @@ export function createBot(token: string, agent?: unknown): Bot {
     await ctx.reply("Запись отменена. Нажмите /start, чтобы начать заново.");
   });
 
-  // Получили контакт → показываем мультивыбор услуг
+  // Получили контакт → либо ищем записи (/my), либо показываем мультивыбор услуг
   bot.on("message:contact", async (ctx) => {
     const contact = ctx.message.contact;
-    const phone = phoneDigits(contact.phone_number);
+    const chatId = String(ctx.chat.id);
+    // В callback_data номер едет цифрами (7XXXXXXXXXX), поэтому «+» не храним.
+    const phone = (normalizePhone(contact.phone_number) ?? `+${phoneDigits(contact.phone_number)}`)
+      .replace(/\D/g, "");
     const name = [contact.first_name, contact.last_name].filter(Boolean).join(" ") ||
       ctx.from?.first_name ||
       "Гость";
+
+    const state = await takeBotState(chatId);
+
+    if (state === STATE_MY) {
+      const now = new Date();
+      const bookings = await getBookingsByPhone(`+${phone}`, now);
+      const view = myBookingsView(bookings, now, `+${phone}`);
+
+      if (view) {
+        await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+        return;
+      }
+
+      await ctx.reply(
+        `На номер +${escapeHtml(phone)} активных записей нет.\n\nЗаписаться — /start`,
+        { parse_mode: "HTML", reply_markup: mainMenu },
+      );
+      return;
+    }
 
     await ctx.reply(
       `Спасибо, <b>${escapeHtml(name)}</b>! Выберите услуги (можно несколько):`,
@@ -361,6 +511,7 @@ export function createBot(token: string, agent?: unknown): Bot {
       startsAt,
       requestKey: `tg:${ctx.from?.id ?? 0}:${date}:${time}:${masterId}`,
       source: "telegram",
+      tgChatId: ctx.chat?.id ? String(ctx.chat.id) : null,
     });
 
     if (!result.ok) {
@@ -380,13 +531,26 @@ export function createBot(token: string, agent?: unknown): Bot {
         `<b>Мастер:</b> ${escapeHtml(master.name)}\n` +
         `<b>Когда:</b> ${escapeHtml(formatDateTimeRange(booking.startsAt, booking.endsAt))}\n` +
         `<b>Заявка:</b> ${escapeHtml(booking.publicId)}\n\n` +
-        `Ждём вас! Отменить запись можно на сайте или по телефону ${escapeHtml(site.phoneDisplay)}.`,
+        `Ждём вас! Посмотреть или отменить запись — /my`,
       { parse_mode: "HTML" },
     );
 
-    notifyNewBooking(booking).catch(() => {
-      // уведомление не критично — заявка уже сохранена
-    });
+    // На serverless нельзя отправлять «в фоне»: функция завершится раньше
+    // запроса в Telegram, и уведомление потеряется. Поэтому ждём ответа.
+    if (!result.duplicate) {
+      await notifyNewBooking(booking).catch(() => undefined);
+    }
+  });
+
+  // Отмена записи из /my: по чату (запись сделана в боте) или по номеру
+  bot.callbackQuery(/^x:([^:]+)$/, async (ctx) => {
+    const result = await cancelBookingByChatId(ctx.match[1], String(ctx.chat?.id ?? ""));
+    await handleCancellation(ctx, result);
+  });
+
+  bot.callbackQuery(/^xp:([^:]+):(\d+)$/, async (ctx) => {
+    const result = await cancelBooking(ctx.match[1], `+${ctx.match[2]}`);
+    await handleCancellation(ctx, result);
   });
 
   bot.callbackQuery("ignore", async (ctx) => {

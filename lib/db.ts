@@ -48,11 +48,20 @@ CREATE TABLE IF NOT EXISTS bookings (
   status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'cancelled', 'done')),
   created_at TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'site',
-  request_key TEXT UNIQUE
+  request_key TEXT UNIQUE,
+  tg_chat_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookings_phone ON bookings(phone);
 CREATE INDEX IF NOT EXISTS idx_bookings_starts ON bookings(starts_at);
+
+/* Состояние диалога бота: без него на serverless нельзя отличить «/my → номер»
+   от «запись → номер». Строка живёт до первого использования. */
+CREATE TABLE IF NOT EXISTS bot_state (
+  chat_id TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,
@@ -131,6 +140,7 @@ export function getDb(): Promise<Client> {
 
       try {
         await client.executeMultiple(SCHEMA);
+        await ensureColumns(client);
         await seedCatalog(client);
         return client;
       } catch (error) {
@@ -140,6 +150,26 @@ export function getDb(): Promise<Client> {
     })();
   }
   return globalStore.__mafiaDbClient;
+}
+
+/**
+ * Колонки, появившиеся позже. У уже созданных баз (Turso в продакшене)
+ * `CREATE TABLE IF NOT EXISTS` их не добавит, поэтому доводим через ALTER.
+ */
+async function ensureColumns(client: Client): Promise<void> {
+  const additions: Array<[table: string, column: string, type: string]> = [
+    ["bookings", "tg_chat_id", "TEXT"],
+  ];
+
+  for (const [table, column, type] of additions) {
+    try {
+      const info = await client.execute(`PRAGMA table_info(${table})`);
+      const exists = info.rows.some((row) => str(rowObject(row).name) === column);
+      if (!exists) await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch (error) {
+      console.error(`[db] не удалось добавить колонку ${table}.${column}:`, error);
+    }
+  }
 }
 
 async function seedCatalog(db: Client): Promise<void> {

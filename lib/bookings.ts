@@ -36,6 +36,8 @@ export type BookingRecord = {
   status: BookingStatus;
   createdAt: string;
   source: string;
+  /** Чат Telegram, из которого оформлена запись: по нему работает /my в боте. */
+  tgChatId: string | null;
 };
 
 export type CreateBookingInput = {
@@ -47,6 +49,7 @@ export type CreateBookingInput = {
   startsAt: string;
   requestKey: string | null;
   source: string;
+  tgChatId?: string | null;
 };
 
 export type CreateBookingResult =
@@ -176,8 +179,9 @@ export async function createBooking(
     await tx.execute({
       sql: `INSERT INTO bookings (
         id, public_id, name, phone, comment, master_id, starts_at, ends_at,
-        duration_min, services_json, total_price, status, created_at, source, request_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)`,
+        duration_min, services_json, total_price, status, created_at, source, request_key,
+        tg_chat_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?)`,
       args: [
         id,
         publicId,
@@ -193,6 +197,7 @@ export async function createBooking(
         now.toISOString(),
         input.source,
         input.requestKey,
+        input.tgChatId ?? null,
       ],
     });
 
@@ -225,7 +230,26 @@ export async function getBookingsByPhone(
     [phone],
   );
 
-  return rows.map(mapRow).sort((a, b) => {
+  return sortBookings(rows.map(mapRow), now);
+}
+
+/** Заявки, оформленные из конкретного чата Telegram (для /my в боте). */
+export async function getBookingsByChatId(
+  chatId: string,
+  now: Date = new Date(),
+): Promise<BookingRecord[]> {
+  const rows = await queryRows(
+    await getDb(),
+    `${SELECT_WITH_MASTER} WHERE b.tg_chat_id = ? ORDER BY b.starts_at DESC LIMIT 100`,
+    [chatId],
+  );
+
+  return sortBookings(rows.map(mapRow), now);
+}
+
+/** Будущие — сначала по возрастанию, прошедшие — потом по убыванию. */
+function sortBookings(list: BookingRecord[], now: Date): BookingRecord[] {
+  return list.sort((a, b) => {
     const aUpcoming = new Date(a.startsAt).getTime() >= now.getTime();
     const bUpcoming = new Date(b.startsAt).getTime() >= now.getTime();
     if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
@@ -249,6 +273,27 @@ export async function cancelBooking(
   if (booking.phone !== phone) {
     return { ok: false, code: "forbidden", message: "Телефон не совпадает с заявкой." };
   }
+  return cancelRecord(booking, now);
+}
+
+/** Отмена из бота: право на отмену даёт чат, в котором оформлена запись. */
+export async function cancelBookingByChatId(
+  publicId: string,
+  chatId: string,
+  now: Date = new Date(),
+): Promise<CancelBookingResult> {
+  const booking = await findByPublicId(publicId);
+  if (!booking) return { ok: false, code: "not_found", message: "Заявка не найдена." };
+  if (booking.tgChatId !== chatId) {
+    return { ok: false, code: "forbidden", message: "Эта запись оформлена в другом чате." };
+  }
+  return cancelRecord(booking, now);
+}
+
+async function cancelRecord(
+  booking: BookingRecord,
+  now: Date,
+): Promise<CancelBookingResult> {
   if (booking.status === "cancelled") return { ok: true, booking };
   if (booking.status === "done") return { ok: false, code: "invalid", message: "Визит уже прошёл." };
 
@@ -261,8 +306,14 @@ export async function cancelBooking(
     };
   }
 
-  await runSql(await getDb(), "UPDATE bookings SET status = 'cancelled' WHERE public_id = ?", [publicId]);
-  const updated = await findByPublicId(publicId);
+  // request_key освобождаем: иначе после отмены тот же клиент не сможет
+  // записаться на это же время (ключ уникален в таблице).
+  await runSql(
+    await getDb(),
+    "UPDATE bookings SET status = 'cancelled', request_key = NULL WHERE public_id = ?",
+    [booking.publicId],
+  );
+  const updated = await findByPublicId(booking.publicId);
   if (!updated) return { ok: false, code: "not_found", message: "Заявка не найдена." };
   return { ok: true, booking: updated };
 }
@@ -323,9 +374,11 @@ async function findByRequestKey(
   requestKey: string,
   executor?: SqlExecutor,
 ): Promise<BookingRecord | null> {
+  // Отменённую заявку не считаем повтором: иначе после отмены клиент не смог бы
+  // записаться на то же время заново (тот же requestKey даёт «дубликат»).
   const row = await queryOne(
     executor ?? (await getDb()),
-    `${SELECT_WITH_MASTER} WHERE b.request_key = ?`,
+    `${SELECT_WITH_MASTER} WHERE b.request_key = ? AND b.status != 'cancelled'`,
     [requestKey],
   );
   return row ? mapRow(row) : null;
@@ -348,6 +401,8 @@ function mapRow(row: SqlRow): BookingRecord {
     status: (str(row.status, "new") as BookingStatus) ?? "new",
     createdAt: str(row.created_at),
     source: str(row.source, "site"),
+    tgChatId:
+      row.tg_chat_id === null || row.tg_chat_id === undefined ? null : str(row.tg_chat_id),
   };
 }
 
