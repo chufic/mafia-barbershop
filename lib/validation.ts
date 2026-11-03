@@ -2,7 +2,7 @@
 
 import { MAX_CART_DURATION_MIN, MAX_CART_SERVICES } from "./cart";
 import { getMasterById } from "../data/masters";
-import { getServiceById } from "../data/services";
+import { getServiceById, masterCanDoServices, serviceMasterHint } from "../data/services";
 import { normalizePhone } from "./phone";
 import {
   BOOKING_HORIZON_DAYS,
@@ -96,6 +96,15 @@ export function validateBookingPayload(input: unknown): ValidationResult<Booking
     errors.serviceIds = `Максимум ${MAX_CART_SERVICES} услуги в одной записи.`;
   } else if (serviceIds.some((id) => !getServiceById(id))) {
     errors.serviceIds = "Одна из услуг больше недоступна — обновите выбор.";
+  } else if (master && !masterCanDoServices(master.id, serviceIds)) {
+    const restricted = serviceIds
+      .map((id) => getServiceById(id))
+      .filter((service) => service && !masterCanDoServices(master.id, [service.id]));
+    const names = restricted.map((service) => service?.name ?? "").filter(Boolean).join(", ");
+    const hint = restricted.map((service) => service && serviceMasterHint(service)).find(Boolean);
+    errors.masterId = hint
+      ? `«${names}» делает ${hint}. Выберите этого мастера.`
+      : `Этот мастер не выполняет: ${names}.`;
   } else {
     const duration = serviceIds.reduce(
       (sum, id) => sum + (getServiceById(id)?.durationMin ?? 0),
@@ -181,6 +190,8 @@ export function parseSlotsParams(params: URLSearchParams):
       date: string;
       durationMin: number;
       masterId: string;
+      /** Выбранные услуги — по ним отсекаем мастеров, которым услуга недоступна. */
+      serviceIds: string[];
     }
   | { ok: false; error: string } {
   const rawDate = params.get("date") ?? "";
@@ -198,7 +209,12 @@ export function parseSlotsParams(params: URLSearchParams):
     return { ok: false, error: "Мастер не найден." };
   }
 
-  return { ok: true, date: rawDate, durationMin: Math.round(rawDuration), masterId };
+  const serviceIds = (params.get("serviceIds") ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0 && Boolean(getServiceById(id)));
+
+  return { ok: true, date: rawDate, durationMin: Math.round(rawDuration), masterId, serviceIds };
 }
 
 export function validTimeOrNull(value: string | null): string | null {

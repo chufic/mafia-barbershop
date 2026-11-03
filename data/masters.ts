@@ -1,9 +1,14 @@
 /**
  * Мастера и график.
  *
- * ВНИМАНИЕ: имена, роли и фото — заглушки, чтобы проверить слоты записи.
- * Замените их на реальных мастеров. workDays: 1 = понедельник … 7 = воскресенье.
- * Время — по Тюмени (Asia/Yekaterinburg).
+ * Реальные мастера барбершопа «Мафия»: Юлия (Барбер) и Екатерина (Старший-мастер).
+ * workDays: 1 = понедельник … 7 = воскресенье. Время — по Тюмени (Asia/Yekaterinburg).
+ *
+ * График стоит «ежедневно, 10:00–21:00» — как часы работы салона. Если у мастера
+ * смены другие, поправьте workDays/startTime/endTime здесь: слоты считаются отсюда.
+ *
+ * yclientsStaffId — id сотрудника в YCLIENTS. Пока null: чтобы заполнить, нужен
+ * доступ к API (staff_id приходит из /api/v1/staff/{companyId}).
  */
 
 export type Master = {
@@ -17,44 +22,38 @@ export type Master = {
   endTime: string;
   about: string;
   isActive: boolean;
+  /** id сотрудника в YCLIENTS; null — интеграция ещё не настроена. */
+  yclientsStaffId: number | null;
 };
 
 export const masters: Master[] = [
   {
-    id: "alexander",
-    name: "Александр",
+    id: "yulia",
+    name: "Юлия",
     photo: null,
     role: "Барбер",
-    specialties: ["Мужские стрижки", "Бритьё"],
-    workDays: [1, 2, 3, 4, 5, 6],
+    specialties: ["Женские и мужские стрижки", "Биозавивка", "Окрашивание"],
+    workDays: [1, 2, 3, 4, 5, 6, 7],
     startTime: "10:00",
     endTime: "21:00",
-    about: "Стрижки и бритьё. На смене с понедельника по субботу.",
+    about:
+      "Стрижки, окрашивание и единственный мастер по биозавивке. На смене ежедневно.",
     isActive: true,
+    yclientsStaffId: null,
   },
   {
-    id: "marat",
-    name: "Марат",
+    id: "ekaterina",
+    name: "Екатерина",
     photo: null,
-    role: "Барбер",
-    specialties: ["Стрижки", "Оформление бороды"],
-    workDays: [2, 3, 4, 5, 6, 7],
+    role: "Старший-мастер",
+    specialties: ["Мужские стрижки", "Оформление бороды", "Уход за лицом"],
+    workDays: [1, 2, 3, 4, 5, 6, 7],
     startTime: "10:00",
     endTime: "21:00",
-    about: "Стрижки и работа с бородой. На смене со вторника по воскресенье.",
+    about:
+      "Старший мастер: мужские стрижки, борода, уход за лицом и кожей головы. На смене ежедневно.",
     isActive: true,
-  },
-  {
-    id: "dmitry",
-    name: "Дмитрий",
-    photo: null,
-    role: "Барбер",
-    specialties: ["Стрижки машинкой", "Детские стрижки"],
-    workDays: [3, 4, 5, 6, 7],
-    startTime: "12:00",
-    endTime: "21:00",
-    about: "Короткие формы и детские стрижки. На смене со среды по воскресенье.",
-    isActive: true,
+    yclientsStaffId: null,
   },
 ];
 

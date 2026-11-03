@@ -12,8 +12,8 @@
  */
 
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy";
-import { getActiveMasters, getMasterById } from "../../data/masters";
-import { services } from "../../data/services";
+import { getMasterById } from "../../data/masters";
+import { mastersForServices, services, serviceMasterHint } from "../../data/services";
 import { site } from "../../data/site";
 import {
   bookingToDto,
@@ -182,10 +182,11 @@ function chosenServices(list: string) {
 }
 
 function servicesText(): string {
-  const lines = services.map(
-    (service) =>
-      `<b>${escapeHtml(service.name)}</b> — ${formatPrice(service.price)} · ${formatDuration(service.durationMin)}`,
-  );
+  const lines = services.map((service) => {
+    const hint = serviceMasterHint(service);
+    const owner = hint ? ` — ${hint}` : "";
+    return `<b>${escapeHtml(service.name)}</b> — ${formatPrice(service.price)} · ${formatDuration(service.durationMin)}${owner ? ` · ${owner}` : ""}`;
+  });
   return `Услуги и цены:\n\n${lines.join("\n")}\n\nЗаписаться — нажмите кнопку внизу.`;
 }
 
@@ -500,7 +501,7 @@ export function createBot(token: string, agent?: unknown): Bot {
     const duration = chosen.reduce((sum, s) => sum + s.durationMin, 0);
 
     const kb = new InlineKeyboard();
-    for (const master of getActiveMasters()) {
+    for (const master of mastersForServices(chosen.map((s) => s.id))) {
       kb.text(master.name, `m:${master.id}:${phone}:${list}`).row();
     }
     kb.text(BACK_LABEL, `sel:${phone}:${list}`);

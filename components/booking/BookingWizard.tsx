@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatWorkDays, getActiveMasters, getMasterById } from "@/data/masters";
-import { SERVICE_CATEGORIES, getServicesByIds, services } from "@/data/services";
+import { formatWorkDays, getMasterById } from "@/data/masters";
+import {
+  SERVICE_CATEGORIES,
+  getServicesByIds,
+  masterCanDoServices,
+  mastersForServices,
+  services,
+} from "@/data/services";
 import { MasterAvatar } from "@/components/masters/MasterAvatar";
 import { useCart } from "@/components/providers/CartProvider";
 import { Icon } from "@/components/ui/Icon";
@@ -89,6 +95,7 @@ export function BookingWizard({
   const selectedServices = useMemo(() => getServicesByIds(selectedIds), [selectedIds]);
   const duration = selectedServices.reduce((sum, service) => sum + service.durationMin, 0);
   const total = selectedServices.reduce((sum, service) => sum + service.price, 0);
+  const selectedKey = selectedIds.join(",");
   const resolvedMaster = slot?.masterId ?? (masterId === "any" ? null : masterId);
   const resolvedMasterName = resolvedMaster
     ? (getMasterById(resolvedMaster)?.name ?? "Мастер")
@@ -103,10 +110,19 @@ export function BookingWizard({
     cacheRef.current.clear();
   }, [duration]);
 
+  // Биозавивку делает только Юлия: если мастер перестал подходить — сбрасываем на «любой»
+  useEffect(() => {
+    if (masterId === "any") return;
+    if (masterCanDoServices(masterId, selectedIds)) return;
+    setMasterId("any");
+    setSlot(null);
+    cacheRef.current.clear();
+  }, [masterId, selectedIds]);
+
   useEffect(() => {
     if (step !== 3 || duration <= 0) return;
 
-    const key = `${date}|${duration}|${masterId}`;
+    const key = `${date}|${duration}|${masterId}|${selectedKey}`;
     const cached = cacheRef.current.get(key);
     if (cached) {
       setSlotsData(cached);
@@ -123,6 +139,7 @@ export function BookingWizard({
       date,
       duration: String(duration),
       masterId,
+      serviceIds: selectedKey,
     });
 
     fetch(`/api/slots?${params.toString()}`, { signal: controller.signal })
@@ -150,7 +167,7 @@ export function BookingWizard({
       });
 
     return () => controller.abort();
-  }, [step, date, duration, masterId]);
+  }, [step, date, duration, masterId, selectedKey]);
 
   function toggleService(id: string) {
     setErrors({});
@@ -343,7 +360,7 @@ export function BookingWizard({
       )}
 
       {step === 2 && (
-        <StepMaster masterId={masterId} onSelect={selectMaster} />
+        <StepMaster masterId={masterId} onSelect={selectMaster} selectedServiceIds={selectedIds} />
       )}
 
       {step === 3 && (
@@ -532,17 +549,20 @@ function StepServices({
 function StepMaster({
   masterId,
   onSelect,
+  selectedServiceIds,
 }: {
   masterId: string;
   onSelect: (id: string) => void;
+  selectedServiceIds: string[];
 }) {
-  const masters = getActiveMasters();
+  const masters = mastersForServices(selectedServiceIds);
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted">
-        Можно выбрать конкретного мастера или доверить выбор нам — покажем время, когда свободен
-        кто-то из команды.
+        {selectedServiceIds.length > 0
+          ? "Выбираем мастера под выбранные услуги — например, биозавивку может делать только Юлия."
+          : "Можно выбрать конкретного мастера или доверить выбор нам — покажем время, когда свободен кто-то из команды."}
       </p>
 
       <ul className="space-y-2">

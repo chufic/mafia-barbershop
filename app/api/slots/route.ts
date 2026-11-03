@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getActiveMasters, getMasterById, type Master } from "@/data/masters";
+import { getMasterById, type Master } from "@/data/masters";
+import { mastersForServices } from "@/data/services";
 import type {
   MasterAvailabilityDto,
   NearestSlotDto,
@@ -49,10 +50,12 @@ export async function GET(request: Request) {
     );
   }
 
+  // Мастера, которые делают ВСЕ выбранные услуги (биозавивку — только Юлия).
+  const allowed = mastersForServices(parsed.serviceIds);
   const selectedMasters =
     parsed.masterId === "any"
-      ? getActiveMasters()
-      : getActiveMasters().filter((master) => master.id === parsed.masterId);
+      ? allowed
+      : allowed.filter((master) => master.id === parsed.masterId);
 
   const dailyBusy = await listBusyBetween(parsed.date, parsed.date);
   const day = buildDayAvailability({
