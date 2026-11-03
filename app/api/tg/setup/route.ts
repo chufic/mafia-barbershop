@@ -46,7 +46,29 @@ export async function POST(request: Request) {
         { status: 502 },
       );
     }
-    return NextResponse.json({ ok: true, webhookUrl }, { headers: { "cache-control": "no-store" } });
+
+    // Меню команд в клиенте Telegram: без этого /my никак не найти.
+    const commands = [
+      { command: "start", description: "Главное меню" },
+      { command: "my", description: "Мои записи и отмена" },
+      { command: "services", description: "Услуги и цены" },
+      { command: "help", description: "Помощь" },
+    ];
+    const commandsResponse = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ commands }),
+      signal: AbortSignal.timeout(12_000),
+      cache: "no-store",
+    });
+    if (!commandsResponse.ok) {
+      console.error("[telegram] setMyCommands failed:", commandsResponse.status);
+    }
+
+    return NextResponse.json(
+      { ok: true, webhookUrl, commandsRegistered: commandsResponse.ok },
+      { headers: { "cache-control": "no-store" } },
+    );
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Telegram connection failed." },
