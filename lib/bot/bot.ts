@@ -230,19 +230,39 @@ function parseServicesText(json: string): string {
   }
 }
 
-async function upcomingBookingsText(): Promise<string> {
+type BookingSource = "site" | "telegram";
+
+function sourceLabel(source: string): string {
+  return source === "telegram" ? "📱 из бота" : "🌐 с сайта";
+}
+
+/** Полный текст фильтра для тех же надписей в заголовке. */
+function sourceTitle(source: BookingSource | null): string {
+  if (source === "telegram") return "только из бота";
+  if (source === "site") return "только с сайта";
+  return "все";
+}
+
+export async function upcomingBookingsText(filter: BookingSource | null = null): Promise<string> {
   const db = await getDb();
+  const nowIso = new Date().toISOString();
+
   const rows = (await db.execute({
     sql: `SELECT b.*, m.name AS master_name
           FROM bookings b
           LEFT JOIN masters m ON m.id = b.master_id
           WHERE b.status = 'new' AND b.starts_at >= ?
+            ${filter ? "AND b.source = ?" : ""}
           ORDER BY b.starts_at ASC
           LIMIT 10`,
-    args: [new Date().toISOString()],
+    args: filter ? [nowIso, filter] : [nowIso],
   })).rows.map((row) => rowObject(row));
 
-  if (rows.length === 0) return "Ближайших заявок пока нет 🎉";
+  if (rows.length === 0) {
+    return filter
+      ? `Ближайших заявок ${sourceTitle(filter)} нет 🎉`
+      : "Ближайших заявок пока нет 🎉";
+  }
 
   const lines = rows.map((row) => {
     const servicesSummary = parseServicesText(str(row.services_json));
@@ -250,11 +270,40 @@ async function upcomingBookingsText(): Promise<string> {
       `🕐 ${escapeHtml(formatDateTimeRange(str(row.starts_at), str(row.ends_at)))}\n` +
       `👤 ${escapeHtml(str(row.name))} · ${escapeHtml(str(row.phone))}\n` +
       `💈 ${escapeHtml(servicesSummary)} — ${formatPrice(num(row.total_price))}\n` +
+      `📌 ${sourceLabel(str(row.source, "site"))} · мастер ${escapeHtml(str(row.master_name))}\n` +
       `№ ${escapeHtml(str(row.public_id))}`
     );
   });
 
-  return `Ближайшие заявки:\n\n${lines.join("\n\n")}`;
+  const counts = (await db.execute({
+    sql: `SELECT source, COUNT(*) AS n FROM bookings
+          WHERE status = 'new' AND starts_at >= ? GROUP BY source`,
+    args: [nowIso],
+  })).rows.map((row) => rowObject(row));
+
+  const countOf = (source: string) =>
+    num(counts.find((row) => str(row.source) === source)?.n ?? 0);
+  const total = countOf("site") + countOf("telegram");
+  const breakdown = `🌐 с сайта ${countOf("site")}, 📱 из бота ${countOf("telegram")}`;
+  const summary = filter
+    ? `Показано: ${rows.length}. Всего будущих: ${total} (${breakdown})`
+    : `Всего будущих: ${total} — ${breakdown}`;
+
+  return (
+    `Ближайшие заявки (${sourceTitle(filter)}):\n` +
+    `${summary}\n\n${lines.join("\n\n")}`
+  );
+}
+
+/** Кнопки фильтра под списком заявок. */
+function bookingsKeyboard(active: BookingSource | null): InlineKeyboard {
+  const label = (value: BookingSource | null, text: string) =>
+    active === value ? `• ${text} •` : text;
+
+  return new InlineKeyboard()
+    .text(label(null, "Все"), "bk:all")
+    .text(label("site", "🌐 Сайт"), "bk:site")
+    .text(label("telegram", "📱 Бот"), "bk:telegram");
 }
 
 export function createBot(token: string, agent?: unknown): Bot {
@@ -286,7 +335,11 @@ export function createBot(token: string, agent?: unknown): Bot {
   });
 
   bot.command("help", async (ctx) => {
-    const adminLine = isAdmin(ctx.chat.id) ? "/bookings — ближайшие заявки\n" : "";
+    const adminLine = isAdmin(ctx.chat.id)
+      ? "/bookings — ближайшие заявки (видно, откуда: сайт или бот)\n" +
+        "/bookings bot — только записи из бота\n" +
+        "/bookings site — только записи с сайта\n"
+      : "";
     await ctx.reply(
       `Команды:\n/start — главное меню\n/my — мои записи и отмена\n/services — услуги и цены\n${adminLine}`,
       { reply_markup: mainMenu },
@@ -311,7 +364,31 @@ export function createBot(token: string, agent?: unknown): Bot {
       await ctx.reply("Эта команда доступна только администратору.");
       return;
     }
-    await ctx.reply(await upcomingBookingsText(), { parse_mode: "HTML" });
+
+    const arg = (ctx.match ?? "").trim().toLowerCase();
+    let filter: BookingSource | null = null;
+    if (/^(bot|бот|тг|tg|telegram)/.test(arg)) filter = "telegram";
+    else if (/^(site|сайт|web)/.test(arg)) filter = "site";
+
+    await ctx.reply(await upcomingBookingsText(filter), {
+      parse_mode: "HTML",
+      reply_markup: bookingsKeyboard(filter),
+    });
+  });
+
+  // Переключение фильтра под списком заявок
+  bot.callbackQuery(/^bk:(all|site|telegram)$/, async (ctx) => {
+    if (!ctx.chat || !isAdmin(ctx.chat.id)) {
+      await ctx.answerCallbackQuery({ text: "Только для администратора.", show_alert: true });
+      return;
+    }
+
+    const filter = ctx.match[1] === "all" ? null : (ctx.match[1] as BookingSource);
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText(await upcomingBookingsText(filter), {
+      parse_mode: "HTML",
+      reply_markup: bookingsKeyboard(filter),
+    });
   });
 
   // Записаться → просим номер
