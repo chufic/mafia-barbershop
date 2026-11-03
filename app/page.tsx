@@ -32,7 +32,7 @@ export default async function HomePage() {
     logo: `${site.url}/icon.svg`,
     image: `${site.url}/opengraph-image`,
     telephone: site.phoneRaw,
-    priceRange: "200–1800 ₽",
+    priceRange: "400–2700 ₽",
     currenciesAccepted: "RUB",
     address: {
       "@type": "PostalAddress",

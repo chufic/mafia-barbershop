@@ -1,7 +1,7 @@
 "use client";
 
 import { site } from "@/data/site";
-import { priceRange } from "@/data/services";
+import { priceRange, servicesInCategory } from "@/data/services";
 import { useCart } from "@/components/providers/CartProvider";
 import { useModal } from "@/components/providers/ModalProvider";
 import { Icon } from "@/components/ui/Icon";
@@ -151,15 +151,26 @@ export function BookingSection() {
               <div className="mt-4 space-y-3 rounded-xl border border-line bg-base/40 p-4 text-sm">
                 <p className="flex items-center justify-between gap-3">
                   <span className="text-muted">Стрижки</span>
-                  <span className="text-ink">от {formatPrice(700)}</span>
+                  <span className="text-ink">
+                    от{" "}
+                    {formatPrice(
+                      Math.min(...servicesInCategory("Стрижки").map((service) => service.price)),
+                    )}
+                  </span>
                 </p>
                 <p className="flex items-center justify-between gap-3">
                   <span className="text-muted">Борода и бритьё</span>
-                  <span className="text-ink">от {formatPrice(700)}</span>
+                  <span className="text-ink">
+                    от {formatPrice(Math.min(...servicesInCategory("Борода и бритьё").map((s) => s.price)))}
+                  </span>
                 </p>
                 <p className="flex items-center justify-between gap-3">
                   <span className="text-muted">Комплексы на двоих</span>
-                  <span className="text-ink">{formatPrice(1800)}</span>
+                  <span className="text-ink">
+                    {formatPrice(
+                      Math.min(...servicesInCategory("Вдвоём и комплексы").map((s) => s.price)),
+                    )}
+                  </span>
                 </p>
                 <div className="h-px bg-line" />
                 <p className="flex items-center justify-between gap-3">
