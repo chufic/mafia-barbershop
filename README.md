@@ -210,7 +210,33 @@ npm run build
 - сетка услуг 4×4 на широком экране, отсутствие горизонтального скролла на 390 px;
 - живой статус «Открыто/Закрыто» по тюменскому времени.
 
-## Деплой (кратко)
+## Деплой
+
+### Amvera Cloud (российский PaaS, 290–490 ₽/мес)
+
+Next.js требует Node.js, поэтому обычный виртуальный хостинг (PHP) не подойдёт.
+Конфиг сборки уже лежит в репозитории — `amvera.yaml`.
+
+1. Регистрация на amvera.ru → «Создать проект» → окружение **Node.js**.
+2. Подключить GitHub `chufic/mafia-barbershop`, ветка `main` — дальше каждый
+   push собирается и выкатывается автоматически.
+3. Тариф: «Начальный» (0,5 ГБ) — впритык по памяти сборки; «Начальный Плюс»
+   (1 ГБ, 490 ₽/мес) — с запасом.
+4. Переменные окружения (Настройки проекта → Переменные): `TURSO_DATABASE_URL`,
+   `TURSO_AUTH_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
+   `TELEGRAM_WEBHOOK_SECRET`, `NEXT_PUBLIC_SITE_URL`, `SYNC_TOKEN`, `VK_TOKEN`,
+   `TWOGIS_REVIEWS_KEY`, `YANDEX_ORG_ID`. `NEXT_PUBLIC_SITE_URL` задать **до**
+   первой сборки — значение вшивается в HTML.
+5. Бесплатный домен `*.amvera.io` и SSL выдаются сразу; свой домен привязывается
+   в том же разделе.
+6. Перерегистрировать вебхук Telegram на новый адрес:
+   `curl -X POST https://<домен>/api/tg/setup -H "Authorization: Bearer $TELEGRAM_WEBHOOK_SECRET"`.
+
+Память сборки: `experimental.cpus = 1` в `next.config.ts` и
+`NODE_OPTIONS=--max-old-space-size=768` в `amvera.yaml` держат пик ~600 МБ
+(без них — ~1,35 ГБ). Обычный `next build` на 1 ГБ падает по OOM.
+
+### Свой VPS
 
 1. Node.js 22.5+ на сервере, `npm ci && npm run build`.
 2. `.env.local` с токеном бота и `NEXT_PUBLIC_SITE_URL`.

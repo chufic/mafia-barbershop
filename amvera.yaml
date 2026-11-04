@@ -1,0 +1,22 @@
+# Конфигурация Amvera Cloud (https://amvera.ru) — российский PaaS с поддержкой
+# Next.js SSR. Деплой: подключить GitHub-репозиторий в панели, дальше каждый
+# push в main собирается автоматически.
+#
+# Проверено локально: с `experimental.cpus = 1` (см. next.config.ts) сборка
+# укладывается в ~600 МБ, поэтому тариф «Начальный» (0,5 ГБ) проходит на грани,
+# «Начальный Плюс» (1 ГБ) — с запасом. Лимит heap ниже выставлен специально:
+# без него V8 на 1 ГБ может упасть по OOM.
+
+meta:
+  environment: node
+  toolchain:
+    name: npm
+    version: "20"
+
+build:
+  additionalCommands: NODE_OPTIONS="--max-old-space-size=768" npm run build
+
+run:
+  # Без обёртки npm — при остановке контейнера процесс получает SIGTERM напрямую.
+  command: node node_modules/next/dist/bin/next start -p 3000
+  containerPort: 3000
