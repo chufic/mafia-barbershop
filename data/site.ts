@@ -63,8 +63,7 @@ export const site = {
   },
 
   /** Базовый адрес сайта — нужен для canonical, sitemap, OG. */
-  url: process.env.NEXT_PUBLIC_SITE_URL || "https://mafia-barbershop.ru",
-  /** TODO: заменить на настоящий домен после покупки/привязки. */
+  url: process.env.NEXT_PUBLIC_SITE_URL || "https://mafia72.ru",
 } as const;
 
-export const workingHoursText = "Ежедневно 10:00–21:00";
+export const workingHoursText = `${site.hours.days} ${site.hours.open}–${site.hours.close}`;
