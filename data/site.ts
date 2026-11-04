@@ -64,6 +64,15 @@ export const site = {
 
   /** Базовый адрес сайта — нужен для canonical, sitemap, OG. */
   url: process.env.NEXT_PUBLIC_SITE_URL || "https://mafia72.ru",
+
+  /**
+   * Запись через YCLIENTS. companyId — номер салона, bookingUrl — публичная форма
+   * онлайн-записи (домен yclients.ru: с 2026 старые ссылки на .com отключаются).
+   */
+  yclients: {
+    companyId: 1151156,
+    bookingUrl: "https://n1151156.yclients.ru/",
+  },
 } as const;
 
 export const workingHoursText = `${site.hours.days} ${site.hours.open}–${site.hours.close}`;

@@ -7,8 +7,9 @@
  * График стоит «ежедневно, 10:00–21:00» — как часы работы салона. Если у мастера
  * смены другие, поправьте workDays/startTime/endTime здесь: слоты считаются отсюда.
  *
- * yclientsStaffId — id сотрудника в YCLIENTS. Пока null: чтобы заполнить, нужен
- * доступ к API (staff_id приходит из /api/v1/staff/{companyId}).
+ * yclientsStaffId — id сотрудника в YCLIENTS (салон 1151156), взят из журнала
+ * записи 4 ноября 2026. Используется, когда сайт начнёт писать визиты через API;
+ * пока bookings идут заявкой в Telegram.
  */
 
 export type Master = {
@@ -39,7 +40,7 @@ export const masters: Master[] = [
     about:
       "Стрижки, окрашивание и единственный мастер по биозавивке. На смене ежедневно.",
     isActive: true,
-    yclientsStaffId: null,
+    yclientsStaffId: 4095165,
   },
   {
     id: "ekaterina",
@@ -53,7 +54,7 @@ export const masters: Master[] = [
     about:
       "Старший мастер: мужские стрижки, борода, уход за лицом и кожей головы. На смене ежедневно.",
     isActive: true,
-    yclientsStaffId: null,
+    yclientsStaffId: 3540850,
   },
 ];
 

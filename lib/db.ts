@@ -117,6 +117,16 @@ CREATE TABLE IF NOT EXISTS social_sync (
   duration_ms INTEGER NOT NULL DEFAULT 0,
   finished_at TEXT NOT NULL
 );
+
+/* События WebHook из журнала YCLIENTS. Храним тело целиком: формат у YCLIENTS
+   не документирован, и по сохранённым событиям можно уточнять разбор. */
+CREATE TABLE IF NOT EXISTS yclients_events (
+  id TEXT PRIMARY KEY,
+  received_at TEXT NOT NULL,
+  body TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_yclients_events_received ON yclients_events(received_at DESC);
 `;
 
 type GlobalWithDb = typeof globalThis & { __mafiaDbClient?: Promise<Client> };
